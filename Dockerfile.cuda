@@ -1,0 +1,68 @@
+# Start with an official ROS 2 base image for the desired distribution
+FROM osrf/ros:humble-desktop-full
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    ROS_DISTRO=humble
+
+ARG USER_UID=1001
+ARG USER_GID=1001
+ARG USERNAME=user
+
+COPY requirements.txt requirements.txt
+COPY packages.txt packages.txt
+
+# Install essential packages and ROS development tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    $(cat packages.txt) \
+	&& apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --upgrade pip
+RUN pip install -r requirements.txt
+RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.0-1_all.deb && \
+    dpkg -i cuda-keyring_1.0-1_all.deb && \
+    apt-get update && \
+    apt-get install -y cuda-toolkit-12-1
+
+RUN git clone https://github.com/NVIDIA/cub.git /opt/cub
+
+ENV CUDA_HOME=/usr/local/cuda \
+    CUB_HOME=/opt/cub \
+    PATH=/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64
+
+# Setup user configuration
+RUN groupadd --gid $USER_GID $USERNAME \
+    && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME \
+    && echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
+    && echo "source /opt/ros/$ROS_DISTRO/setup.bash" >> /home/$USERNAME/.bashrc \
+    && echo "source /usr/share/colcon_argcomplete/hook/colcon-argcomplete.bash" >> /home/$USERNAME/.bashrc
+    
+USER $USERNAME
+
+WORKDIR /franka_ws
+
+# Install the missing ROS 2 dependencies
+COPY . /franka_ws/src
+RUN sudo chown -R $USERNAME:$USERNAME /ros2_ws \
+    && vcs import src < src/franka.repos --recursive --skip-existing \
+    && sudo apt-get update \
+    && rosdep update \
+    && rosdep install --from-paths src --ignore-src --rosdistro $ROS_DISTRO -y \
+    && sudo apt-get clean \
+    && sudo rm -rf /var/lib/apt/lists/* \
+    && rm -rf /home/$USERNAME/.ros \
+    && rm -rf src \
+    && mkdir -p src
+
+COPY ./scripts/franka_entrypoint.sh /franka_entrypoint.sh
+RUN sudo chmod +x /franka_entrypoint.sh
+
+# Set the default shell to bash and the workdir to the source directory
+SHELL [ "/bin/bash", "-c" ]
+ENTRYPOINT [ "/franka_entrypoint.sh" ]
+CMD [ "/bin/bash" ]
+WORKDIR /ros2_ws

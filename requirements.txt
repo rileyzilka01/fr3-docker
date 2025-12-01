@@ -1,0 +1,12 @@
+sympy==1.9
+numpy==1.22.0
+matplotlib
+libtmux
+opencv-python
+conan==1.59
+zmq
+torch
+msgpack
+msgpack_numpy
+rosnumpy
+panda-python
